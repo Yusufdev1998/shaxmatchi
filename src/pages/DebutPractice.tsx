@@ -2,19 +2,65 @@ import {useParams} from "react-router-dom";
 import React, {useCallback, useEffect, useRef, useState} from "react";
 import {Chess, type Square} from "chess.js";
 import {Chessboard, type SquareHandlerArgs} from "react-chessboard";
-import type {Debut} from "../data/debuts";
-import {debuts} from "../data/debuts";
+import {db} from "../firebase";
+import {doc, onSnapshot} from "firebase/firestore";
 import NavBar from "../components/NavBar";
 import Confetti from "react-confetti";
 import {useWindowSize} from "react-use";
 
+function pgnToSanMovesSafe(pgn: string): string[] {
+    try {
+        const chess = new Chess();
+        chess.loadPgn(pgn, {strict: true});
+        return chess.history();
+    } catch {
+        // Fallback: very naive extraction of SAN tokens
+        return pgn
+            .replace(/\{[^}]*\}/g, " ")
+            .replace(/\([^)]*\)/g, " ")
+            .replace(/\d+\.(\.\.\.)?/g, " ")
+            .replace(/\s+/g, " ")
+            .trim()
+            .split(" ")
+            .filter(Boolean);
+    }
+}
+
 export default function DebutPractice() {
     const {debutId} = useParams<{ debutId?: string }>();
-    const debut: Debut | undefined = debuts.find(d => d.id === debutId);
+    const [debut, setDebut] = useState<{ id: string; name: string; pgn: string; moves: string[] } | null>(null);
+    const [loadError, setLoadError] = useState<string | null>(null);
+    const [loading, setLoading] = useState<boolean>(true);
+
+    useEffect(() => {
+        if (!debutId) {
+            setDebut(null);
+            setLoading(false);
+            return;
+        }
+        setLoading(true);
+        setLoadError(null);
+        const ref = doc(db, "debuts", debutId);
+        const unsub = onSnapshot(ref, (snap) => {
+            if (!snap.exists()) {
+                setDebut(null);
+                setLoading(false);
+                return;
+            }
+            const data = snap.data() as { name: string; pgn: string };
+            const moves = pgnToSanMovesSafe(data.pgn);
+            setDebut({id: snap.id, name: data.name, pgn: data.pgn, moves});
+            setLoading(false);
+        }, (e) => {
+            setLoadError(e.message);
+            setLoading(false);
+        });
+        return () => unsub();
+    }, [debutId]);
 
     const [game, setGame] = useState<Chess>(new Chess());
     const [moveIndex, setMoveIndex] = useState<number>(0);
-    const [message, setMessage] = useState<string>("Your move!");
+    const [message, setMessage] = useState<string>("Sizning navbatingiz!");
     const soundsRef = useRef<Record<string, HTMLAudioElement> | null>(null);
     const [moveFrom, setMoveFrom] = useState('');
     const [optionSquares, setOptionSquares] = useState({});
@@ -79,13 +125,8 @@ export default function DebutPractice() {
 
         // not a valid move
         if (!foundMove) {
-            // check if clicked on new piece
             const hasMoveOptions = getMoveOptions(square as Square);
-
-            // if new piece, setMoveFrom, otherwise clear moveFrom
             setMoveFrom(hasMoveOptions ? square : '');
-
-            // return early
             return;
         }
 
@@ -103,6 +144,15 @@ export default function DebutPractice() {
 
     const {width, height} = useWindowSize();
     const isFinished: boolean = moveIndex === (debut?.moves.length ?? 0);
+
+    // Reset board when debut or side changes
+    useEffect(() => {
+        setGame(new Chess());
+        setMoveIndex(0);
+        setMessage("Sizning navbatingiz!");
+        setMoveFrom("");
+        setOptionSquares({});
+    }, [debutId, userPlaysWhite]);
 
     function onDrop(sourceSquare: string, targetSquare: string | null): boolean {
 
@@ -126,13 +176,13 @@ export default function DebutPractice() {
                 setMoveIndex(nextIndex);
                 if (nextIndex === debut.moves.length) {
                     playSfx("success")
-                    setMessage(`🎉 You mastered ${debut.name}!`);
+                    setMessage(`🎉 ${debut.name} — o'zlashtirildi!`);
                 } else {
-                    setMessage("✅ Correct! Next move...");
+                    setMessage("✅ To'g'ri! Keyingi yurish...");
                 }
                 return true;
             } else {
-                setMessage("❌ Wrong move, try again!");
+                setMessage("❌ Noto'g'ri, yana urinib ko'ring!");
                 playSfx("wrong"); // 🔊 wrong sound
                 return false;
             }
@@ -145,7 +195,7 @@ export default function DebutPractice() {
         const playsWhite = nextPlaysWhite ?? userPlaysWhite;
         setGame(new Chess());
         setMoveIndex(0);
-        setMessage("Your move!");
+        setMessage("Sizning navbatingiz!");
         if (nextPlaysWhite !== null) setUserPlaysWhite(playsWhite);
     }
 
@@ -190,7 +240,7 @@ export default function DebutPractice() {
         const played = ng.move(expected);
         if (!played) {
             // If a line is illegal from the current state, don't loop; inform the user
-            setMessage("⚠️ This line isn't legal from current position.");
+            setMessage("⚠️ Bu yo'nalish hozirgi holatdan qonuniy emas.");
             return;
         }
 
@@ -199,18 +249,34 @@ export default function DebutPractice() {
         const nextIndex = moveIndex + 1;
         setMoveIndex(nextIndex);
         if (nextIndex === debut.moves.length) {
-            setMessage(`🎉 You mastered ${debut.name}!`);
+            setMessage(`🎉 ${debut.name} — o'zlashtirildi!`);
             playSfx("success");
         } else {
-            setMessage("🤖 Auto played. Your move!");
+            setMessage("🤖 Avto yurdi. Navbat sizda!");
         }
         // the dependency list below will retrigger if another auto move is needed (rare)
     }, [autoMode, moveIndex, userPlaysWhite, debut, isFinished, game, playSfx]);
 
+    if (loading) {
+        return (
+            <div className="flex flex-col items-center justify-center h-screen">
+                <p className="text-lg font-medium">Yuklanmoqda...</p>
+            </div>
+        );
+    }
+
+    if (loadError) {
+        return (
+            <div className="flex flex-col items-center justify-center h-screen">
+                <p className="text-lg font-medium text-red-600">{loadError}</p>
+            </div>
+        );
+    }
+
     if (!debut) {
         return (
             <div className="flex flex-col items-center justify-center h-screen">
-                <p className="text-lg font-medium">Debut not found.</p>
+                <p className="text-lg font-medium">Debyut topilmadi.</p>
             </div>
         );
     }
@@ -230,20 +296,32 @@ export default function DebutPractice() {
                 <div className="w-full max-w-sm">
                     <Chessboard
                         options={{
+                            boardStyle: {overflow: "visible"},
                             position: game.fen(),
-                            onPieceDrop: ({sourceSquare, targetSquare}) =>
-                                onDrop(sourceSquare, targetSquare),
+                            onPieceDrop: ({sourceSquare, targetSquare}) => onDrop(sourceSquare, targetSquare),
                             boardOrientation,
                             onSquareClick,
                             squareStyles: optionSquares,
+                            alphaNotationStyle: {
+                                fontSize: "1.3rem",
+                                bottom: "-25px",
+                                color: "#444",
+
+                            },
+                            numericNotationStyle: {
+                                fontSize: "1rem",
+                                left: "-15px",
+                                color: '#444',
+                            }
+
                         }}
                     />
                 </div>
 
                 {/* Progress tracker */}
-                <div className="w-full max-w-sm text-center">
+                <div className="w-full max-w-sm text-center mt-2">
                     <p className="text-lg font-medium">
-                        Step {Math.min(moveIndex + 1, total)} / {total}
+                        Qadam {Math.min(moveIndex + 1, total)} / {total}
                     </p>
                     <div className="w-full bg-gray-200 rounded-full h-2 mt-2">
                         <div
@@ -262,7 +340,7 @@ export default function DebutPractice() {
                 <div className="w-full max-w-sm flex flex-col gap-3">
                     {/* Auto switch */}
                     <label className="flex items-center justify-between px-3 py-2 bg-gray-50 rounded-lg border">
-                        <span className="font-medium">Auto (opponent moves)</span>
+                        <span className="font-medium">Avto</span>
                         <input
                             type="checkbox"
                             checked={autoMode}
@@ -273,7 +351,7 @@ export default function DebutPractice() {
 
                     {/* Side toggle */}
                     <div className="flex items-center justify-between px-3 py-2 bg-gray-50 rounded-lg border">
-                        <span className="font-medium">Play as</span>
+                        <span className="font-medium">Tomon</span>
                         <div className="flex gap-2">
                             <button
                                 onClick={() => resetPractice(true)}
@@ -283,7 +361,7 @@ export default function DebutPractice() {
                                         : "bg-white text-gray-800 hover:bg-gray-100"
                                 }`}
                             >
-                                White
+                                Oq
                             </button>
                             <button
                                 onClick={() => resetPractice(false)}
@@ -293,7 +371,7 @@ export default function DebutPractice() {
                                         : "bg-white text-gray-800 hover:bg-gray-100"
                                 }`}
                             >
-                                Black
+                                Qora
                             </button>
                         </div>
                     </div>
@@ -304,9 +382,10 @@ export default function DebutPractice() {
                     onClick={() => resetPractice(null)}
                     className="px-4 py-2 bg-blue-600 text-white rounded-lg shadow hover:bg-blue-700 transition"
                 >
-                    Restart
+                    Qayta boshlash
                 </button>
             </div>
+
         </div>
     );
 }

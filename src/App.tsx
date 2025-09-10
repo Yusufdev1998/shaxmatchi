@@ -3,6 +3,7 @@ import DebutList from "./pages/DebutList";
 import DebutPractice from "./pages/DebutPractice";
 import SignIn from "./pages/SignIn";
 import AdminDashboard from "./pages/AdminDashboard";
+import AdminDebuts from "./pages/AdminDebuts";
 
 export default function App() {
     return (
@@ -13,6 +14,7 @@ export default function App() {
                     <Route path="/practice/:debutId" element={<DebutPractice/>}/>
                     <Route path="/signin" element={<SignIn/>}/>
                     <Route path="/admin" element={<AdminDashboard/>}/>
+                    <Route path="/admin/debuts" element={<AdminDebuts/>}/>
                 </Routes>
             </div>
         </BrowserRouter>
