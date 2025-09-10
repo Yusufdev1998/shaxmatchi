@@ -14,7 +14,10 @@ export default function NavBar({title}: NavBarProps) {
     return (
         <div className="w-full flex justify-between items-center p-4 bg-blue-600 text-white">
             <button onClick={goBack} className="text-sm font-medium">⬅ Orqaga</button>
-            <h1 className="text-lg font-semibold">{title}</h1>
+            <div className="flex items-center gap-2">
+                <img src="/logo.svg" alt="Shaxmatchi logo" className="w-6 h-6"/>
+                <h1 className="text-lg font-semibold">{title}</h1>
+            </div>
             <div className="flex items-center gap-3">
                 {!user ? (
                     <button onClick={goSignIn} disabled={loading}
